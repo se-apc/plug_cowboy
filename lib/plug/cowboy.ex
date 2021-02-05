@@ -4,10 +4,16 @@ defmodule Plug.Cowboy do
 
   ## Options
 
+    * `:net` - If using `:inet` (IPv4 only - the default) or `:inet6` (IPv6)
+
     * `:ip` - the ip to bind the server to.
       Must be either a tuple in the format `{a, b, c, d}` with each value in `0..255` for IPv4,
       or a tuple in the format `{a, b, c, d, e, f, g, h}` with each value in `0..65535` for IPv6,
       or a tuple in the format `{:local, path}` for a unix socket at the given `path`.
+      If you set an IPv6, the `:net` option will be automatically set to `:inet6`.
+      If both `:net` and `:ip` options are given, make sure they are compatible
+      (i.e. give a IPv4 for `:inet` and IPv6 for `:inet6`).
+      Also, see "Loopback vs Public IP Addresses".
 
     * `:port` - the port to run the server.
       Defaults to 4000 (http) and 4040 (https).
@@ -34,19 +40,54 @@ defmodule Plug.Cowboy do
       see [Cowboy docs](https://ninenines.eu/docs/en/cowboy/2.5/manual/cowboy_http/).
 
     * `:transport_options` - A keyword list specifying transport options,
-      see [ranch docs](https://ninenines.eu/docs/en/ranch/1.6/manual/ranch/).
+      see [Ranch docs](https://ninenines.eu/docs/en/ranch/1.7/manual/ranch/).
       By default `:num_acceptors` will be set to `100` and `:max_connections`
       to `16_384`.
 
-  All other options are given as `:socket_opts` to the underlying transport.
-  When running on HTTPS, any SSL configuration should be given directly to the
-  adapter. See `https/3` for an example and read `Plug.SSL.configure/1` to
-  understand about our SSL defaults. When using a unix socket, OTP 21+ is
-  required for `Plug.Static` and `Plug.Conn.send_file/3` to behave correctly.
+  All other options given at the top level must configure the underlying
+  socket. For HTTP connections, those options are listed under
+  [`ranch_tcp`](https://ninenines.eu/docs/en/ranch/1.7/manual/ranch_tcp/).
+  For example, you can set `:ipv6_v6only` to true if you want to bind only
+  on IPv6 addresses.
+
+  For HTTPS (SSL) connections, those options are described in
+  [`ranch_ssl`](https://ninenines.eu/docs/en/ranch/1.7/manual/ranch_ssl/).
+  See `https/3` for an example and read `Plug.SSL.configure/1` to
+  understand about our SSL defaults.
+
+  When using a unix socket, OTP 21+ is required for `Plug.Static` and
+  `Plug.Conn.send_file/3` to behave correctly.
+
+  ## Loopback vs Public IP Addresses
+
+  Should your application bind to a loopback address, such as `::1` (IPv6) or
+  `127.0.0.1` (IPv4), or a public one, such as `::0` (IPv6) or `0.0.0.0`
+  (IPv4)? It depends on how (and whether) you want it to be reachable from
+  other machines.
+
+  Loopback addresses are only reachable from the same host (`localhost` is
+  usually configured to resolve to a loopback address).
+  You may wish to use one if:
+
+  - Your app is running in a development environment (such as your laptop) and
+  you don't want others on the same network to access it.
+  - Your app is running in production, but behind a reverse proxy. For example,
+  you might have Nginx bound to a public address and serving HTTPS, but
+  forwarding the traffic to your application running on the same host. In that
+  case, having your app bind to the loopback address means that Nginx can reach
+  it, but outside traffic can only reach it via Nginx.
+
+  Public addresses are reachable from other hosts. You may wish to use one if:
+
+  - Your app is running in a container. In this case, its loopback address is
+  reachable only from within the container; to be accessible from outside the
+  container, it needs to bind to a public IP address.
+  - Your app is running in production without a reverse proxy, using Cowboy's
+  SSL support.
 
   ## Instrumentation
 
-  PlugCowboy uses the `:telemetry` library for instrumentation. The following
+  Plug.Cowboy uses the `:telemetry` library for instrumentation. The following
   span events are published during each request:
 
     * `[:cowboy, :request, :start]` - dispatched at the beginning of the request
@@ -56,7 +97,7 @@ defmodule Plug.Cowboy do
   A single event is published when the request ends with an early error:
     * `[:cowboy, :request, :early_error]` - dispatched for requests terminated early by Cowboy
 
-  See (`cowboy_telemetry`)[https://github.com/beam-telemetry/cowboy_telemetry#telemetry-events]
+  See [`cowboy_telemetry`](https://github.com/beam-telemetry/cowboy_telemetry#telemetry-events)
   for more details on the events.
 
   To opt-out of this default instrumentation, you can manually configure
@@ -134,20 +175,6 @@ defmodule Plug.Cowboy do
   def shutdown(ref) do
     :cowboy.stop_listener(ref)
   end
-
-  @transport_options [
-    :connection_type,
-    :handshake_timeout,
-    :max_connections,
-    :logger,
-    :num_acceptors,
-    :shutdown,
-    :socket,
-    :socket_opts,
-
-    # Special cases supported by plug but not ranch
-    :acceptors
-  ]
 
   @doc """
   A function for starting a Cowboy2 server under Elixir v1.5+ supervisors.
@@ -272,22 +299,13 @@ defmodule Plug.Cowboy do
     protocol_options = Map.merge(%{env: %{dispatch: dispatch}}, protocol_and_extra_options)
     {transport_options, socket_options} = Keyword.pop(opts, :transport_options, [])
 
-    option_keys = Keyword.keys(socket_options)
-
-    for opt <- @transport_options, opt in option_keys do
-      option_deprecation_warning(opt)
-    end
-
-    {num_acceptors, socket_options} = Keyword.pop(socket_options, :num_acceptors, 100)
-    {num_acceptors, socket_options} = Keyword.pop(socket_options, :acceptors, num_acceptors)
-    {max_connections, socket_options} = Keyword.pop(socket_options, :max_connections, 16_384)
-
-    socket_options = non_keyword_opts ++ socket_options
+    {net, socket_options} = Keyword.pop(socket_options, :net)
+    socket_options = List.wrap(net) ++ non_keyword_opts ++ socket_options
 
     transport_options =
       transport_options
-      |> Keyword.put_new(:num_acceptors, num_acceptors)
-      |> Keyword.put_new(:max_connections, max_connections)
+      |> Keyword.put_new(:num_acceptors, 100)
+      |> Keyword.put_new(:max_connections, 16_384)
       |> Keyword.update(
         :socket_opts,
         socket_options,
@@ -372,19 +390,5 @@ defmodule Plug.Cowboy do
 
   defp format_peer({addr, port}) do
     "#{:inet_parse.ntoa(addr)}:#{port}"
-  end
-
-  defp option_deprecation_warning(:acceptors),
-    do: option_deprecation_warning(:acceptors, :num_acceptors)
-
-  defp option_deprecation_warning(option),
-    do: option_deprecation_warning(option, option)
-
-  defp option_deprecation_warning(option, expected_option) do
-    warning =
-      "using :#{option} in options is deprecated. Please pass " <>
-        ":#{expected_option} to the :transport_options keyword list instead"
-
-    IO.warn(warning)
   end
 end

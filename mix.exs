@@ -1,7 +1,8 @@
 defmodule Plug.Cowboy.MixProject do
   use Mix.Project
 
-  @version "2.4.1"
+  @source_url "https://github.com/elixir-plug/plug_cowboy"
+  @version "2.5.0-dev"
   @description "A Plug adapter for Cowboy"
 
   def project do
@@ -12,17 +13,17 @@ defmodule Plug.Cowboy.MixProject do
       deps: deps(),
       package: package(),
       description: @description,
-      name: "PlugCowboy",
+      name: "Plug.Cowboy",
       docs: [
         main: "Plug.Cowboy",
         source_ref: "v#{@version}",
-        source_url: "https://github.com/elixir-plug/plug_cowboy"
+        source_url: @source_url,
+        extras: ["CHANGELOG.md"]
       ],
       aliases: aliases()
     ]
   end
 
-  # Configuration for the OTP application
   def application do
     [
       extra_applications: [:logger],
@@ -45,9 +46,9 @@ defmodule Plug.Cowboy.MixProject do
 
   defp package do
     %{
-      licenses: ["Apache 2"],
+      licenses: ["Apache-2.0"],
       maintainers: ["José Valim", "Gary Rennie"],
-      links: %{"GitHub" => "https://github.com/elixir-plug/plug_cowboy"}
+      links: %{"GitHub" => @source_url}
     }
   end
 
