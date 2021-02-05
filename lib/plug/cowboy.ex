@@ -231,10 +231,8 @@ defmodule Plug.Cowboy do
           {:ranch_ssl, :cowboy_tls, %{transport_opts | socket_opts: socket_opts}}
       end
 
-    {id, start, restart, shutdown, type, modules} =
       :ranch.child_spec(ref, ranch_module, transport_opts, cowboy_protocol, proto_opts)
 
-    %{id: id, start: start, restart: restart, shutdown: shutdown, type: type, modules: modules}
   end
 
   ## Helpers
